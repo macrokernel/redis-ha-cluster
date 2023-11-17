@@ -1,0 +1,33 @@
+---
+# defaults file for Redis HA Cluster 
+
+# ==== Docker
+docker_mtu: 1500
+
+# ==== Redis
+redis_version: "7.2.3"
+redis_exporter_version: "v1.55.0"
+redis_sentinel_exporter_version: "1.7.1"
+redis_overlay_network: "10.16.0.0/24"
+redis_server_port: "6379"
+redis_sentinel_port: "26379"
+redis_exporter_port: "9121"
+redis_sentinel_exporter_port: "9355"
+redis_maxmemory: 
+redis_cluster_name: "mycluster"
+redis_server_replication_factor: 3
+redis_sentinel_replication_factor: 3
+redis_sentinel_quorum: 2
+redis_persistence_enabled: true
+redis_password: 
+redis_prometheus_enabled: false
+redis_server_hosts: 
+redis_sentinel_hosts: 
+
+# ==== Internal
+docker_redis_data_location: "/opt/redis/data"
+docker_redis_config_location: "/opt/redis/conf"
+docker_redis_server_conf_template: "templates/redis.conf.j2"
+docker_redis_server_sh: "templates/redis-entrypoint.sh"
+docker_redis_sentinel_conf_template: "templates/sentinel.conf.j2"
+docker_redis_sentinel_sh: "templates/sentinel-entrypoint.sh"

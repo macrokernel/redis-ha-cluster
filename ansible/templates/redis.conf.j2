@@ -1,0 +1,22 @@
+port {{ redis_server_port }}
+
+replica-announce-ip 0.0.0.0
+
+timeout 0
+tcp-keepalive 300
+
+# Stop accepting writes if a master detects that it is no longer 
+# able to transfer its writes to the specified number of replicas
+min-replicas-to-write 1
+min-replicas-max-lag 10
+
+{% if redis_maxmemory %}
+maxmemory {{ redis_maxmemory }}
+{% endif %}
+{% if redis_persistence_enabled %}
+appendonly yes
+{% endif %}
+{% if redis_password %}
+requirepass {{ redis_password }}
+masterauth {{ redis_password }}
+{% endif %}

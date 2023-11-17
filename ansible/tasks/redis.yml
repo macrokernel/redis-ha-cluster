@@ -1,0 +1,237 @@
+---
+- name: Create redis network
+  community.docker.docker_network:
+    name: redis
+    driver: overlay
+    attachable: true
+    driver_options:
+      com.docker.network.driver.mtu: "{{ docker_mtu | default(1500) }}"
+    ipam_config:
+      - subnet: "{{ redis_overlay_network }}"
+  delegate_to: compose-server-manager-1
+  run_once: true
+
+
+- name: Label docker swarm nodes for redis-server
+  community.docker.docker_node:
+    hostname: "{{ item }}"
+    labels:
+      redis-server: 'true'
+  with_items: "{{ redis_server_hosts }}"
+  delegate_to: compose-server-manager-1
+  run_once: true
+
+- name: Label docker swarm nodes for redis-sentinel
+  community.docker.docker_node:
+    hostname: "{{ item }}"
+    labels:
+      redis-sentinel: 'true'
+  with_items: "{{ redis_sentinel_hosts }}"
+  delegate_to: compose-server-manager-1
+  run_once: true
+
+
+- name: Remove docker swarm services if existing
+  community.docker.docker_swarm_service:
+    name: "{{ item }}"
+    state: absent
+  with_items:
+    - redis-sentinel-exporter
+    - redis-exporter
+    - redis-sentinel
+    - redis-server
+  delegate_to: compose-server-manager-1
+  run_once: true
+
+
+- name: Create {{ docker_redis_data_location }} directory
+  file:
+    path: "{{ docker_redis_data_location }}"
+    state: directory
+    owner: root
+    group: root
+    mode: 0755
+
+- name: Create {{ docker_redis_config_location }} directory
+  file:
+    path: "{{ docker_redis_config_location }}"
+    state: directory
+    owner: root
+    group: root
+    mode: 0755
+
+- name: Template and copy over redis.conf
+  template:
+    src: "{{ docker_redis_server_conf_template }}"
+    dest: "{{ docker_redis_config_location }}/redis.conf"
+    owner: root
+    group: root
+    mode: 0644
+
+- name: Template and copy over sentinel.conf
+  template:
+    src: "{{ docker_redis_sentinel_conf_template }}"
+    dest: "{{ docker_redis_config_location }}/sentinel.conf"
+    owner: root
+    group: root
+    mode: 0644
+
+- name: Copy over redis-entrypoint.sh
+  copy:
+    src: "{{ docker_redis_server_sh }}"
+    dest: "{{ docker_redis_config_location }}/redis-entrypoint.sh"
+    owner: root
+    group: root
+    mode: 0755
+
+- name: Copy over sentinel-entrypoint.sh
+  copy:
+    src: "{{ docker_redis_sentinel_sh }}"
+    dest: "{{ docker_redis_config_location }}/sentinel-entrypoint.sh"
+    owner: root
+    group: root
+    mode: 0755
+
+
+- name: Create redis server service
+  community.docker.docker_swarm_service:
+    name: "redis-server"
+    image: "redis:{{ redis_version }}"
+    command: /bin/bash
+    args:
+      - /usr/local/bin/redis-entrypoint.sh
+      - "/usr/local/etc/redis/redis.conf"
+      - "{{ redis_cluster_name }}"
+      - "{{ redis_server_port }}"
+      - "{{ redis_sentinel_port }}"
+      - "{{ redis_sentinel_replication_factor | default (redis_sentinel_hosts | length) }}"
+    hostname: redis-server-{{ '{{' }}.Task.Slot{{ '}}' }}  #'
+    networks:
+      - name: redis
+    dns_search: redis
+    endpoint_mode: dnsrr
+    mounts:
+      - source: "{{ docker_redis_data_location }}"
+        target: "/data"
+        type: bind
+        readonly: false
+      - source: "{{ docker_redis_config_location }}"
+        target: "/usr/local/etc/redis/"
+        type: bind
+        readonly: false
+      - source: "{{ docker_redis_config_location }}/redis-entrypoint.sh"
+        target: /usr/local/bin/redis-entrypoint.sh
+        type: bind
+        readonly: true
+    replicas: "{{ redis_server_replication_factor | default(redis_server_hosts | length) }}"
+    placement:
+      replicas_max_per_node: 1
+      constraints: [ node.labels.redis-server == true ]
+    restart_config:
+      condition: on-failure
+    # Healthcheck is disabled because Docker Swarm DNS name resolution does not work until 
+    # healthchecks are passing, and entrypoint script requires working DNS name resolution 
+    # prior to Redis is started.
+    # healthcheck:
+    #  test: [ "CMD", "redis-cli", "-p", "{{ redis_server_port }}", "--raw", "incr", "ping" ]
+  delegate_to: compose-server-manager-1
+  run_once: true
+
+- name: Create redis sentinel service
+  community.docker.docker_swarm_service:
+    name: "redis-sentinel"
+    image: "redis:{{ redis_version }}"
+    command: /bin/bash
+    args:
+      - /usr/local/bin/sentinel-entrypoint.sh
+      - /usr/local/etc/redis/sentinel.conf
+      - "{{ redis_cluster_name }}"
+      - "{{ redis_server_port }}"
+      - "{{ redis_sentinel_port }}"
+      - "{{ redis_sentinel_quorum }}"
+      - "{{ redis_sentinel_replication_factor | default (redis_sentinel_hosts | length) }}"
+      - "{{ redis_server_replication_factor | default (redis_server_hosts | length) }}"
+    hostname: redis-sentinel-{{ '{{' }}.Task.Slot{{ '}}' }}  #'
+    networks:
+      - name: redis
+    dns_search: redis
+    endpoint_mode: dnsrr
+    mounts:
+      - source: "{{ docker_redis_config_location }}"
+        target: "/usr/local/etc/redis/"
+        type: bind
+        readonly: false
+      - source: "{{ docker_redis_config_location }}/sentinel-entrypoint.sh"
+        target: /usr/local/bin/sentinel-entrypoint.sh
+        type: bind
+        readonly: true
+    replicas: "{{ redis_sentinel_replication_factor | default (redis_sentinel_hosts | length) }}"
+    placement:
+      replicas_max_per_node: 1
+      constraints: [ node.labels.redis-sentinel == true ]
+    restart_config:
+      condition: on-failure
+    # Healthcheck is disabled because Docker Swarm DNS name resolution does not work until 
+    # healthchecks are passing, and entrypoint script requires working DNS name resolution 
+    # prior to Redis is started.
+    # healthcheck:
+    #   test: [ "CMD", "redis-cli", "-p", "{{ redis_sentinel_port }}", "--raw", "ping" ]
+  delegate_to: compose-server-manager-1
+  run_once: true
+
+- name: Create redis prometheus exporter service
+  community.docker.docker_swarm_service:
+    name: "redis-exporter"
+    image: "oliver006/redis_exporter:{{ redis_exporter_version }}"
+    hostname: "redis-exporter-{{ '{{' }}.Task.Slot{{ '}}' }}"
+    networks:
+      - name: redis
+    dns_search: redis
+    endpoint_mode: dnsrr
+    publish:
+      - target_port: "{{ redis_exporter_port }}"
+        published_port: "{{ redis_exporter_port }}"
+        mode: host
+    env:
+      REDIS_ADDR: "redis-server-{{ '{{' }}.Task.Slot{{ '}}' }}:{{ redis_server_port }}"
+      REDIS_PASSWORD: "{{ redis_password }}"
+    replicas: "{{ redis_server_replication_factor | default (redis_server_hosts | length) }}"
+    placement:
+      replicas_max_per_node: 1
+      constraints: [ node.labels.redis-server == true ]
+    restart_config:
+      condition: on-failure
+  delegate_to: compose-server-manager-1
+  run_once: true
+  when: >
+    redis_prometheus_enabled is defined and redis_prometheus_enabled != "" and 
+    redis_exporter_version is defined and redis_exporter_version != "" and 
+    redis_exporter_port is defined and redis_exporter_port != ""
+
+- name: Create redis sentinel prometheus exporter service
+  community.docker.docker_swarm_service:
+    name: "redis-sentinel-exporter"
+    image: "leominov/redis_sentinel_exporter:{{ redis_sentinel_exporter_version }}"
+    hostname: "redis-sentinel-exporter-{{ '{{' }}.Task.Slot{{ '}}' }}"
+    networks:
+      - name: redis
+    dns_search: redis
+    endpoint_mode: dnsrr
+    publish:
+      - target_port: "{{ redis_sentinel_exporter_port }}"
+        published_port: "{{ redis_sentinel_exporter_port }}"
+        mode: host
+    env:
+      SENTINEL_ADDR: "redis://redis-sentinel-{{ '{{' }}.Task.Slot{{ '}}' }}:{{ redis_sentinel_port }}"
+    replicas: "{{ redis_sentinel_replication_factor | default (redis_sentinel_hosts | length) }}"
+    placement:
+      replicas_max_per_node: 1
+      constraints: [ node.labels.redis-sentinel == true ]
+    restart_config:
+      condition: on-failure
+  delegate_to: compose-server-manager-1
+  run_once: true
+  when: >
+    redis_prometheus_enabled is defined and redis_prometheus_enabled != "" and 
+    redis_sentinel_exporter_version is defined and redis_sentinel_exporter_version != "" and 
+    redis_sentinel_exporter_port is defined and redis_sentinel_exporter_port != ""
