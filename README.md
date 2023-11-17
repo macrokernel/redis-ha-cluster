@@ -26,7 +26,7 @@ Sentinel quorum number must be defined by `redis_quorum` parameter in `defaults/
 
 Redis data persistence can be enabled or disabled by setting `redis_persistence_enabled` parameter value to `true` or `false` in `defaults/main.yml`. It is beneficial to have persistence enabled in order to improve resilience of the cluster. With data persistence disabled Redis cluster won't be able to survive outage of all of the server instances, and the cluster may become nonfunctional after server instances are restored. Unless you are planning to store large amounts of data, it is advised to have persistence enabled. See more about data persistence in [Redis Persistence documentation](https://redis.io/docs/management/persistence/).  
 
-You may set `redis_password` in `defaults/main.yml` to protect communications between Redis master server, replicas and sentinels.  
+You may set `redis_password` in `defaults/main.yml` to protect communications between Redis clients, master, replicas and sentinels.  
 
 In order to limit memory usage by Redis server set `redis_maxmemory` to something other than `0` in `defaults/main.yml`.
 
