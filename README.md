@@ -48,7 +48,8 @@ redis_sentinel_hosts:
   - redis-sentinel-4.example.com
 redis_server_port: "6379"
 redis_sentinel_port: "26379"
-redis_prometheus_port: "9121"
+redis_exporter_port: "9121"
+redis_sentinel_exporter_port: "9355"
 redis_maxmemory: "200M"
 redis_cluster_name: "mycluster"
 redis_server_replication_factor: 3
